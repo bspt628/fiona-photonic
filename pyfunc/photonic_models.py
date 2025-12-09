@@ -2,7 +2,7 @@
 Photonic Models for FIONA Neural Network Accelerator
 
 This module provides various photonic optical element models for MVM operations.
-The model type can be selected via the FIONA_PHOTONIC_MODEL environment variable.
+The model type is selected via the model_type parameter passed from SystemVerilog.
 
 Available models:
 - ideal: Perfect mathematical operations (default)
@@ -11,9 +11,8 @@ Available models:
 - mzi_nonlinear: MZI (Mach-Zehnder Interferometer) with non-ideal characteristics
 - all_effects: Combined noise, quantization, and nonlinearity
 
-Environment variables:
-- FIONA_PHOTONIC_MODEL: Select model type ('ideal', 'noisy', 'quantized', 'mzi_nonlinear', 'all_effects')
-- FIONA_NOISE_SIGMA: Noise standard deviation (default: 0.01)
+Environment variables (for effect parameters):
+- FIONA_NOISE_SIGMA: Noise standard deviation (default: 0.1)
 - FIONA_QUANT_BITS: DAC/ADC quantization bits (default: 8)
 - FIONA_MZI_EXTINCTION: MZI extinction ratio in dB (default: 30)
 
@@ -25,6 +24,7 @@ import numpy as np
 import os
 from .utils.profiler import profiler
 from .utils.parser import Parser
+from .utils.formatting import format_matrix
 
 
 # ============================================================
@@ -33,11 +33,11 @@ from .utils.parser import Parser
 
 def get_model_type():
     """Get the selected photonic model type."""
-    return os.environ.get('FIONA_PHOTONIC_MODEL', 'ideal')
+    return os.environ.get('FIONA_PHOTONIC_MODEL', 'noisy')
 
 def get_noise_sigma():
     """Get the noise standard deviation."""
-    return float(os.environ.get('FIONA_NOISE_SIGMA', '0.01'))
+    return float(os.environ.get('FIONA_NOISE_SIGMA', '0.1'))
 
 def get_quant_bits():
     """Get the DAC/ADC quantization bits."""
@@ -56,13 +56,16 @@ def apply_noise(value, sigma):
     """Add Gaussian noise to simulate thermal/shot noise in optical components."""
     print(f'[DEBUG apply_noise] value type={type(value)}, sigma={sigma}')
     is_scalar = np.isscalar(value) or (isinstance(value, np.ndarray) and value.shape == ())
+    is_integer = np.issubdtype(np.asarray(value).dtype, np.integer)
     value = np.atleast_1d(np.asarray(value))
     print(f'[DEBUG apply_noise] value.shape={value.shape}, is_scalar={is_scalar}')
     noise = np.random.normal(0, sigma, value.shape)
     result = value + noise * np.abs(value).mean()
     # Return scalar if input was scalar
+    if is_integer:
+        result = np.round(result).astype(np.int64)
     if is_scalar:
-        return float(result.flat[0])
+        return int(result.flat[0]) if is_integer else float(result.flat[0])
     return result
 
 def apply_quantization(value, bits):
@@ -137,8 +140,7 @@ def apply_photonic_model(result, model_type=None):
         sigma = get_noise_sigma()
         print(f'[Photonic Model] Applying noise (sigma={sigma}) - TEMPORARILY DISABLED')
         # TODO: Fix apply_noise to work with scalar values from dot product
-        # For now, return result unchanged
-        return result
+        return apply_noise(result, sigma)
 
     elif model_type == 'quantized':
         bits = get_quant_bits()
@@ -171,15 +173,18 @@ def apply_photonic_model(result, model_type=None):
 def dotp(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=None):
     """Dot product with selectable photonic model."""
     model_type = get_model_type()
-    print(f'[Python] dotp - Model: {model_type}')
-    print('[Python] Shape_out = ', str(shape_out))
-    print('[Python] Matrix_in1 = ', str(matrix_in1))
-    print('[Python] Matrix_in2 = ', str(matrix_in2))
+    print(f'[Python] ========== dotp (Model: {model_type}) ==========')
+    print(f'[Python] Shape_out = {shape_out}')
+    print(format_matrix('Matrix_in1 (raw)', matrix_in1))
+    print(format_matrix('Matrix_in2 (raw)', matrix_in2))
 
     parser = Parser(shape_out, matrix_in1, matrix_in2, bit_out=bit_out, bit_in1=bit_in1, bit_in2=bit_in2)
     comp_in1, comp_in2 = parser.get_in()
     comp_in1 = comp_in1.squeeze()
     comp_in2 = comp_in2.squeeze()
+
+    print(format_matrix('comp_in1 (parsed)', comp_in1))
+    print(format_matrix('comp_in2 (parsed)', comp_in2))
 
     # Ideal computation
     comp_out = np.dot(comp_in1, comp_in2)
@@ -188,26 +193,38 @@ def dotp(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=
     comp_out = apply_photonic_model(comp_out, model_type)
 
     print('[Python] `dotp` executed.')
-    if hasattr(comp_out, 'shape'):
-        print('[Python] comp_out.shape = ', comp_out.shape)
-    else:
-        print('[Python] comp_out (scalar) = ', comp_out)
+    print(format_matrix('comp_out (result)', comp_out))
     retval = parser.set_out(comp_out)
 
     return retval
 
 
 @profiler()
-def mvm(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=None):
-    """Matrix-vector multiplication with selectable photonic model."""
-    model_type = get_model_type()
-    print(f'[Python] mvm - Model: {model_type}')
-    print('[Python] Shape_out = ', str(shape_out))
-    print('[Python] Vector_in1 = ', str(matrix_in1))
-    print('[Python] Matrix_in2 = ', str(matrix_in2))
+def mvm(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=None, model_type=None):
+    """Matrix-vector multiplication with selectable photonic model.
+
+    Args:
+        shape_out: Output shape specification
+        matrix_in1: Input vector (1D)
+        matrix_in2: Input matrix (2D)
+        bit_out: Output bit width
+        bit_in1: Input1 bit width
+        bit_in2: Input2 bit width
+        model_type: Photonic model type ('ideal', 'noisy', 'quantized', 'mzi_nonlinear', 'all_effects')
+                    If None, defaults to 'ideal'
+    """
+    if model_type is None:
+        model_type = 'ideal'
+    print(f'[Python] ========== mvm (Model: {model_type}) ==========')
+    print(f'[Python] Shape_out = {shape_out}')
+    print(format_matrix('Vector_in1 (raw)', matrix_in1))
+    print(format_matrix('Matrix_in2 (raw)', matrix_in2))
 
     parser = Parser(shape_out, matrix_in1, matrix_in2, bit_out=bit_out, bit_in1=bit_in1, bit_in2=bit_in2)
     comp_in1, comp_in2 = parser.get_in()
+
+    print(format_matrix('comp_in1 (parsed)', comp_in1))
+    print(format_matrix('comp_in2 (parsed)', comp_in2))
 
     # Ideal computation
     comp_out = np.matmul(comp_in2, comp_in1)
@@ -215,10 +232,8 @@ def mvm(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=N
     # Apply photonic model effects
     comp_out = apply_photonic_model(comp_out, model_type)
 
-    print('[Python] comp_out = ', comp_out)
     print('[Python] `mvm` executed.')
-    if hasattr(comp_out, 'shape'):
-        print('[Python] comp_out.shape = ', comp_out.shape)
+    print(format_matrix('comp_out (result)', comp_out))
     retval = parser.set_out(comp_out)
 
     return retval

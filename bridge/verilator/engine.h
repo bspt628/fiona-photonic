@@ -33,8 +33,10 @@ extern void init_python_env();
 extern void deinit_python_env();
 
 extern void array_handle1(char*, char*, svOpenArrayHandle, svOpenArrayHandle);
-extern void array_handle2(char*, char*, svOpenArrayHandle, svOpenArrayHandle, svOpenArrayHandle, 
+extern void array_handle2(char*, char*, svOpenArrayHandle, svOpenArrayHandle, svOpenArrayHandle,
                           svBitVecVal*, svBitVecVal*, svBitVecVal*, svBitVecVal*, svBitVecVal*, svBitVecVal*);
+extern void array_handle_1d2d(char*, char*, svOpenArrayHandle, svOpenArrayHandle, svOpenArrayHandle);
+extern void array_handle_1d2d_model(char*, char*, char*, svOpenArrayHandle, svOpenArrayHandle, svOpenArrayHandle);
 
 #ifdef __cplusplus
 }

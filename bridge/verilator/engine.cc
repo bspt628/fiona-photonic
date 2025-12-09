@@ -322,3 +322,149 @@ void array_handle2(char *pyfilename, char *pyfuncname, svOpenArrayHandle arr_out
     free(iters_out);
 }
 
+void array_handle_1d2d(char *pyfilename, char *pyfuncname, svOpenArrayHandle arr_out,
+        svOpenArrayHandle arr_in1, svOpenArrayHandle arr_in2) {
+    // Validate dimensions: in1=1D (vector), in2=2D (matrix), out=1D (vector)
+    int dim_in1 = svDimensions(arr_in1);
+    assert(dim_in1 == 1 && "arr_in1 must be 1D array");
+    int dim_in2 = svDimensions(arr_in2);
+    assert(dim_in2 == 2 && "arr_in2 must be 2D array");
+    int dim_out = svDimensions(arr_out);
+    assert(dim_out == 1 && "arr_out must be 1D array");
+
+    // Configure the bound of the iterators for arr_in1 (1D)
+    struct iterator_t *iters_in1 = (struct iterator_t *)malloc(sizeof(struct iterator_t) * dim_in1);
+    memset(iters_in1, 0, sizeof(struct iterator_t) * dim_in1);
+    for (int d = dim_in1; d > 0; d--) {
+        struct iterator_t *ptr = &iters_in1[d - 1];
+        ptr->cur = ptr->low = svLow(arr_in1, d);
+        ptr->high = svHigh(arr_in1, d);
+    }
+
+    // Configure the bound of the iterators for arr_in2 (2D)
+    struct iterator_t *iters_in2 = (struct iterator_t *)malloc(sizeof(struct iterator_t) * dim_in2);
+    memset(iters_in2, 0, sizeof(struct iterator_t) * dim_in2);
+    for (int d = dim_in2; d > 0; d--) {
+        struct iterator_t *ptr = &iters_in2[d - 1];
+        ptr->cur = ptr->low = svLow(arr_in2, d);
+        ptr->high = svHigh(arr_in2, d);
+    }
+
+    // Configure the bound of the iterators for arr_out (1D)
+    struct iterator_t *iters_out = (struct iterator_t *)malloc(sizeof(struct iterator_t) * dim_out);
+    memset(iters_out, 0, sizeof(struct iterator_t) * dim_out);
+    for (int d = dim_out; d > 0; d--) {
+        struct iterator_t *ptr = &iters_out[d - 1];
+        ptr->cur = ptr->low = svLow(arr_out, d);
+        ptr->high = svHigh(arr_out, d);
+    }
+
+    // Convert SV arrays to Python lists
+    PyObject *list_in1 = recursive_get(iters_in1, dim_in1 - 1, 0, arr_in1);  // 1D: [[bytes], [bytes], ...]
+    PyObject *list_in2 = recursive_get(iters_in2, dim_in2 - 1, 0, arr_in2);  // 2D: [[[bytes], ...], ...]
+    PyObject *list_out = get_array_size(arr_out);
+
+    // Call Python function
+    PyObject *callable = pyfunc_map[PyFileFunc(std::string(pyfilename), std::string(pyfuncname))];
+    if (callable && PyCallable_Check(callable)) {
+        PyObject *args = PyTuple_Pack(6, list_out, list_in1, list_in2,
+            PyLong_FromLong(ELEMENT_SIZE_BITS(arr_out)),
+            PyLong_FromLong(ELEMENT_SIZE_BITS(arr_in1)),
+            PyLong_FromLong(ELEMENT_SIZE_BITS(arr_in2)));
+        PyObject *ret_obj = PyObject_CallObject(callable, args);
+
+        if (ret_obj == NULL) {
+            printf("[array_handle_1d2d] Python call failed\n");
+            PyErr_Print();
+            fflush(stdout);
+            exit(-1);
+        }
+
+        recursive_set(iters_out, dim_out - 1, 0, arr_out, ret_obj);
+        Py_DecRef(args);
+        Py_DecRef(ret_obj);
+    }
+
+    // Cleanup
+    Py_DecRef(list_in1);
+    Py_DecRef(list_in2);
+    free(iters_in1);
+    free(iters_in2);
+    free(iters_out);
+}
+
+void array_handle_1d2d_model(char *pyfilename, char *pyfuncname, char *model_type,
+        svOpenArrayHandle arr_out, svOpenArrayHandle arr_in1, svOpenArrayHandle arr_in2) {
+    // Validate dimensions: in1=1D (vector), in2=2D (matrix), out=1D (vector)
+    int dim_in1 = svDimensions(arr_in1);
+    assert(dim_in1 == 1 && "arr_in1 must be 1D array");
+    int dim_in2 = svDimensions(arr_in2);
+    assert(dim_in2 == 2 && "arr_in2 must be 2D array");
+    int dim_out = svDimensions(arr_out);
+    assert(dim_out == 1 && "arr_out must be 1D array");
+
+    // Configure the bound of the iterators for arr_in1 (1D)
+    struct iterator_t *iters_in1 = (struct iterator_t *)malloc(sizeof(struct iterator_t) * dim_in1);
+    memset(iters_in1, 0, sizeof(struct iterator_t) * dim_in1);
+    for (int d = dim_in1; d > 0; d--) {
+        struct iterator_t *ptr = &iters_in1[d - 1];
+        ptr->cur = ptr->low = svLow(arr_in1, d);
+        ptr->high = svHigh(arr_in1, d);
+    }
+
+    // Configure the bound of the iterators for arr_in2 (2D)
+    struct iterator_t *iters_in2 = (struct iterator_t *)malloc(sizeof(struct iterator_t) * dim_in2);
+    memset(iters_in2, 0, sizeof(struct iterator_t) * dim_in2);
+    for (int d = dim_in2; d > 0; d--) {
+        struct iterator_t *ptr = &iters_in2[d - 1];
+        ptr->cur = ptr->low = svLow(arr_in2, d);
+        ptr->high = svHigh(arr_in2, d);
+    }
+
+    // Configure the bound of the iterators for arr_out (1D)
+    struct iterator_t *iters_out = (struct iterator_t *)malloc(sizeof(struct iterator_t) * dim_out);
+    memset(iters_out, 0, sizeof(struct iterator_t) * dim_out);
+    for (int d = dim_out; d > 0; d--) {
+        struct iterator_t *ptr = &iters_out[d - 1];
+        ptr->cur = ptr->low = svLow(arr_out, d);
+        ptr->high = svHigh(arr_out, d);
+    }
+
+    // Convert SV arrays to Python lists
+    PyObject *list_in1 = recursive_get(iters_in1, dim_in1 - 1, 0, arr_in1);
+    PyObject *list_in2 = recursive_get(iters_in2, dim_in2 - 1, 0, arr_in2);
+    PyObject *list_out = get_array_size(arr_out);
+
+    // Create model_type string for Python
+    PyObject *py_model_type = PyUnicode_FromString(model_type);
+
+    // Call Python function with model_type as 7th argument
+    PyObject *callable = pyfunc_map[PyFileFunc(std::string(pyfilename), std::string(pyfuncname))];
+    if (callable && PyCallable_Check(callable)) {
+        PyObject *args = PyTuple_Pack(7, list_out, list_in1, list_in2,
+            PyLong_FromLong(ELEMENT_SIZE_BITS(arr_out)),
+            PyLong_FromLong(ELEMENT_SIZE_BITS(arr_in1)),
+            PyLong_FromLong(ELEMENT_SIZE_BITS(arr_in2)),
+            py_model_type);
+        PyObject *ret_obj = PyObject_CallObject(callable, args);
+
+        if (ret_obj == NULL) {
+            printf("[array_handle_1d2d_model] Python call failed\n");
+            PyErr_Print();
+            fflush(stdout);
+            exit(-1);
+        }
+
+        recursive_set(iters_out, dim_out - 1, 0, arr_out, ret_obj);
+        Py_DecRef(args);
+        Py_DecRef(ret_obj);
+    }
+
+    // Cleanup
+    Py_DecRef(list_in1);
+    Py_DecRef(list_in2);
+    Py_DecRef(py_model_type);
+    free(iters_in1);
+    free(iters_in2);
+    free(iters_out);
+}
