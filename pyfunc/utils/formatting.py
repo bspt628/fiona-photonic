@@ -58,9 +58,9 @@ def format_matrix(name, data, max_rows=8, max_cols=8):
                     lines[-1] = f'  Shape: ({rows},) [raw: {arr.shape}], dtype: {arr.dtype}'
                     lines.append(f'  (1D vector, {rows} elements, {cols} bytes each)')
                     display_rows = min(rows, max_rows)
-                    # Show first byte of each element as preview
-                    preview = [int(arr[i, 0]) for i in range(display_rows)]
-                    lines.append(f'  First bytes: {preview}{"..." if rows > max_rows else ""}')
+                    # Interpret bytes as signed integers (little-endian)
+                    preview = [int.from_bytes(arr[i].astype(np.uint8).tobytes(), byteorder='little', signed=True) for i in range(display_rows)]
+                    lines.append(f'  Values: {preview}{"..." if rows > max_rows else ""}')
                 else:
                     # Regular 2D array - format as matrix
                     display_rows = min(rows, max_rows)
@@ -87,9 +87,9 @@ def format_matrix(name, data, max_rows=8, max_cols=8):
                     display_rows = min(d1, max_rows)
                     display_cols = min(d2, max_cols)
 
-                    # Show first byte of each element as preview matrix
+                    # Interpret bytes as signed integers (little-endian)
                     for i in range(display_rows):
-                        row_vals = [f'{int(arr[i, j, 0]):>6}' for j in range(display_cols)]
+                        row_vals = [f'{int.from_bytes(arr[i, j].astype(np.uint8).tobytes(), byteorder="little", signed=True):>6}' for j in range(display_cols)]
                         row_str = ' '.join(row_vals)
                         if d2 > max_cols:
                             row_str += '  ...'

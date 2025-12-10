@@ -1,22 +1,34 @@
 module top;
 
+    // ============================================================
+    // Parameters
+    // ============================================================
+    parameter int ROWS = 6;
+    parameter int COLS = 6;
+    parameter int VEC_LEN = 6;
+
+    // ============================================================
+    // DPI-C Function Imports
+    // ============================================================
     import "DPI-C" function void init_python_env();
     import "DPI-C" function void deinit_python_env();
-    
+
     // Due to the definition from SV-DPI docs, the appended square bracket pair is required,
     // in despite of the zero dimension data, e.g. `bit[N:0] val` should be `bit[N:0] val[]`,
     // or the compiler will parse it as `svBitVecVal` instead of `svOpenArrayHandle`.
 
+    // Handler 1: Single input/output (test/ops_single)
     import "DPI-C" function void array_handle1(
-        string filename, string funcname, 
-        output bit[15:0] array_out[5:0][1:0][],
-        input bit[23:0] array_in[5:0][1:0][]);
+        string filename, string funcname,
+        output bit[15:0] array_out[ROWS-1:0][1:0][],
+        input bit[15:0] array_in[ROWS-1:0][1:0][]);
 
+    // Handler 2: Dual input with padding (ideal_numerical/ops_dual)
     import "DPI-C" function void array_handle2(
         string filename, string funcname,
-        output bit[15:0] array_out[1:0][5:0][],
-        input bit[23:0] array_in1[5:0][1:0][],
-        input bit[23:0] array_in2[1:0][5:0][],
+        output bit[15:0] array_out[1:0][COLS-1:0][],
+        input bit[15:0] array_in1[ROWS-1:0][1:0][],
+        input bit[15:0] array_in2[1:0][COLS-1:0][],
         input bit[31:0] in1_cols,
         input bit[31:0] in1_rows,
         input bit[31:0] in2_cols,
@@ -24,80 +36,131 @@ module top;
         input bit[31:0] out_cols,
         input bit[31:0] out_rows);
 
+    // Handler 3: 1D vector + 2D matrix (unused, kept for reference)
     import "DPI-C" function void array_handle_1d2d(
         string filename, string funcname,
-        output bit[15:0] array_out[5:0][],
-        input bit[23:0] array_in1[5:0][],
-        input bit[23:0] array_in2[5:0][5:0][]);
+        output bit[15:0] array_out[VEC_LEN-1:0][],
+        input bit[15:0] array_in1[VEC_LEN-1:0][],
+        input bit[15:0] array_in2[ROWS-1:0][COLS-1:0][]);
 
+    // Handler 4: 1D+2D with model selection (photonic_models/mvm)
     import "DPI-C" function void array_handle_1d2d_model(
         string filename, string funcname, string model_type,
-        output bit signed [15:0] array_out[5:0][],
-        input bit signed [23:0] array_in1[5:0][],
-        input bit signed [23:0] array_in2[5:0][5:0][]);
+        output bit signed [15:0] array_out[VEC_LEN-1:0][],
+        input bit signed [15:0] array_in1[VEC_LEN-1:0][],
+        input bit signed [15:0] array_in2[ROWS-1:0][COLS-1:0][]);
 
     initial begin
-        bit [15:0] ad_value1 [5:0][1:0];
-        bit [15:0] ad_value2 [1:0][5:0];
-        
-        bit [23:0] da_value1 [5:0][1:0];
-        bit [23:0] da_value2 [1:0][5:0];
+        // ============================================================
+        // Variables for array_handle1 (test/ops_single)
+        // ============================================================
+        bit [15:0] h1_da_in [ROWS-1:0][1:0];   // DAC input
+        bit [15:0] h1_ad_out [ROWS-1:0][1:0];  // ADC output
 
-        bit signed [15:0] ad_value_mvm [5:0];
-        bit signed [23:0] da_value_mvm1 [5:0];
-        bit signed [23:0] da_value_mvm2 [5:0][5:0];
+        // ============================================================
+        // Variables for array_handle2 (ideal_numerical/ops_dual)
+        // ============================================================
+        bit [15:0] h2_da_in1 [ROWS-1:0][1:0];  // DAC input 1
+        bit [15:0] h2_da_in2 [1:0][COLS-1:0];  // DAC input 2
+        bit [15:0] h2_ad_out [1:0][COLS-1:0];  // ADC output
 
-        foreach(da_value1[i, j])
+        // ============================================================
+        // Variables for array_handle_1d2d_model (photonic_models/mvm)
+        // ============================================================
+        bit signed [15:0] mvm_da_vec [VEC_LEN-1:0];          // DAC input vector
+        bit signed [15:0] mvm_da_mat [VEC_LEN-1:0][VEC_LEN-1:0];   // DAC input matrix
+        bit signed [15:0] mvm_ad_out [VEC_LEN-1:0];          // ADC output (ideal)
+        bit signed [15:0] mvm_ad_out_noisy [VEC_LEN-1:0];    // ADC output (noisy)
+
+        // ============================================================
+        // Initialize test data for array_handle1
+        // ============================================================
+        foreach(h1_da_in[i, j])
         begin
-            da_value1[i][j] = 24'(i) + 24'(j << 8);
+            h1_da_in[i][j] = 16'(i) + 16'(j << 8);
         end
 
-        foreach(da_value2[i, j])
+        // ============================================================
+        // Initialize test data for array_handle2
+        // ============================================================
+        foreach(h2_da_in1[i, j])
         begin
-            da_value2[i][j] = 24'(i << 12) + 24'(j << 8);
+            h2_da_in1[i][j] = 16'(i) + 16'(j << 8);
         end
 
-        foreach(da_value_mvm1[i])
+        foreach(h2_da_in2[i, j])
         begin
-            da_value_mvm1[i] = 24'(i);
+            h2_da_in2[i][j] = 16'(i << 12) + 16'(j << 8);
         end
 
-        // Initialize with mean=0 values: (2*i-5)*10 + (2*j-5)*5
-        // For i,j in [0,5]: 2*i-5 gives [-5,-3,-1,1,3,5], sum=0
-        foreach(da_value_mvm2[i, j])
+        // ============================================================
+        // Initialize test data for MVM
+        // Vector: [0, 1, 2, 3, 4, 5]
+        // Matrix: mean=0 values using (2*i-5)*10 + (2*j-5)*5
+        // ============================================================
+        foreach(mvm_da_vec[i])
         begin
-            da_value_mvm2[i][j] = 24'(signed'((2*i - 5) * 10 + (2*j - 5) * 5));
+            mvm_da_vec[i] = 16'(i);
         end
 
+        foreach(mvm_da_mat[i, j])
+        begin
+            // (2*i-5)*10 + (2*j-5)*5 gives values from -75 to +75 with mean=0
+            mvm_da_mat[i][j] = 16'(signed'((2*i - 5) * 10 + (2*j - 5) * 5));
+        end
+
+        // ============================================================
+        // Execute tests
+        // ============================================================
         init_python_env();
 
-        array_handle1("test", "ops_single", ad_value1, da_value1);
-            
-
-        foreach(ad_value1[i, j])
+        // Test 1: array_handle1 (test/ops_single)
+        $display("\n[SV] ========== Test: array_handle1 (test/ops_single) ==========");
+        array_handle1("test", "ops_single", h1_ad_out, h1_da_in);
+        foreach(h1_ad_out[i, j])
         begin
-            $display("[SV] ad_value1[%d][%d] = %d", i, j, ad_value1[i][j]);
+            $display("[SV] h1_ad_out[%0d][%0d] = %0d", i, j, h1_ad_out[i][j]);
         end
 
-        // da_value1: [5:0][1:0] = 6 rows, 2 cols
-        // da_value2: [1:0][5:0] = 2 rows, 6 cols
-        // ad_value2: [1:0][5:0] = 2 rows, 6 cols (output)
-        array_handle2("ideal_numerical", "ops_dual", ad_value2, da_value1, da_value2,
-            32'd2, 32'd6,   // in1_cols=2, in1_rows=6
-            32'd6, 32'd2,   // in2_cols=6, in2_rows=2
-            32'd6, 32'd2);  // out_cols=6, out_rows=2
-        foreach(ad_value2[i, j])
+        // Test 2: array_handle2 (ideal_numerical/ops_dual)
+        $display("\n[SV] ========== Test: array_handle2 (ideal_numerical/ops_dual) ==========");
+        array_handle2("ideal_numerical", "ops_dual", h2_ad_out, h2_da_in1, h2_da_in2,
+            32'd2, 32'd6,   // in1: cols=2, rows=6
+            32'd6, 32'd2,   // in2: cols=6, rows=2
+            32'd6, 32'd2);  // out: cols=6, rows=2
+        foreach(h2_ad_out[i, j])
         begin
-            $display("[SV] ad_value2[%d][%d] = %d", i, j, ad_value2[i][j]);
+            $display("[SV] h2_ad_out[%0d][%0d] = %0d", i, j, h2_ad_out[i][j]);
         end
 
-        // Test with different photonic models
+        // Test 3: MVM with ideal model
         // Available models: "ideal", "noisy", "quantized", "mzi_nonlinear", "all_effects"
-        array_handle_1d2d_model("photonic_models", "mvm", "ideal", ad_value_mvm, da_value_mvm1, da_value_mvm2);
-        $display("[SV] === MVM Results (model: ideal) ===");
-        foreach(ad_value_mvm[i])
+        $display("\n[SV] ========== Test: MVM (model: ideal) ==========");
+        array_handle_1d2d_model("photonic_models", "mvm", "ideal",
+            mvm_ad_out, mvm_da_vec, mvm_da_mat);
+        foreach(mvm_ad_out[i])
         begin
-            $display("[SV] ad_value_mvm[%d] = %d", i, $signed(ad_value_mvm[i]));
+            $display("[SV] mvm_ad_out[%0d] = %0d", i, $signed(mvm_ad_out[i]));
+        end
+
+        // Test 4: MVM with noisy model (legacy)
+        $display("\n[SV] ========== Test: MVM (model: noisy) ==========");
+        array_handle_1d2d_model("photonic_models", "mvm", "noisy",
+            mvm_ad_out_noisy, mvm_da_vec, mvm_da_mat);
+        foreach(mvm_ad_out_noisy[i])
+        begin
+            $display("[SV] mvm_ad_out_noisy[%0d] = %0d", i, $signed(mvm_ad_out_noisy[i]));
+        end
+
+        // Test 5: MVM with realistic MZI model
+        // This model includes: phase error, thermal crosstalk, insertion loss,
+        // output crosstalk, detector noise, and DAC/ADC quantization
+        $display("\n[SV] ========== Test: MVM (model: mzi_realistic) ==========");
+        array_handle_1d2d_model("photonic_models", "mvm", "mzi_realistic",
+            mvm_ad_out_noisy, mvm_da_vec, mvm_da_mat);
+        foreach(mvm_ad_out_noisy[i])
+        begin
+            $display("[SV] mvm_ad_out_realistic[%0d] = %0d", i, $signed(mvm_ad_out_noisy[i]));
         end
 
         deinit_python_env();

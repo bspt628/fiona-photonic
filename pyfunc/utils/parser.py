@@ -26,19 +26,22 @@ class Parser:
         shape_in = arr.shape
         round_flag = True
 
-        if 0 < bit_length <= 8:
-            dfmt = "<B"
-        elif 8 < bit_length <= 16:
-            dfmt = "<H"
-        elif 24 < bit_length <= 32:
-            dfmt = "<u4"
-        elif 56 < bit_length <= 64:
-            dfmt = "<u8"
+        # Only use view() for byte-aligned standard sizes (8, 16, 32, 64 bits)
+        # Non-standard sizes (e.g., 24-bit) use int.from_bytes
+        if bit_length == 8:
+            dfmt = "<b" if sign_flag else "<B"
+        elif bit_length == 16:
+            dfmt = "<h" if sign_flag else "<H"
+        elif bit_length == 32:
+            dfmt = "<i4" if sign_flag else "<u4"
+        elif bit_length == 64:
+            dfmt = "<i8" if sign_flag else "<u8"
         else:
+            # Non-standard bit lengths (e.g., 24-bit): use int.from_bytes
             round_flag = False
             itemsize = int(math.ceil(bit_length / 8))
             tmp = arr.reshape(-1, itemsize)
-            ret = np.array([int.from_bytes(tmp[i], byteorder='little', signed=sign_flag) for i in range(0, len(tmp))]).reshape(*shape_in[:-1])
+            ret = np.array([int.from_bytes(bytes(tmp[i]), byteorder='little', signed=sign_flag) for i in range(0, len(tmp))]).reshape(*shape_in[:-1])
 
         if round_flag:
             ret = arr.view(dfmt)
