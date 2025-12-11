@@ -38,6 +38,9 @@ extern void array_handle2(char*, char*, svOpenArrayHandle, svOpenArrayHandle, sv
 extern void array_handle_1d2d(char*, char*, svOpenArrayHandle, svOpenArrayHandle, svOpenArrayHandle);
 extern void array_handle_1d2d_model(char*, char*, char*, svOpenArrayHandle, svOpenArrayHandle, svOpenArrayHandle);
 
+// Floating-point handlers for Transformer models
+extern void array_handle_1d2d_fp32(char*, char*, char*, svOpenArrayHandle, svOpenArrayHandle, svOpenArrayHandle);
+
 #ifdef __cplusplus
 }
 #endif

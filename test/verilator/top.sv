@@ -50,6 +50,13 @@ module top;
         input bit signed [15:0] array_in1[VEC_LEN-1:0][],
         input bit signed [15:0] array_in2[ROWS-1:0][COLS-1:0][]);
 
+    // Handler 5: 1D+2D with FP32 support (photonic_models/mvm_fp32)
+    import "DPI-C" function void array_handle_1d2d_fp32(
+        string filename, string funcname, string model_type,
+        output bit [31:0] array_out[VEC_LEN-1:0][],
+        input bit [31:0] array_in1[VEC_LEN-1:0][],
+        input bit [31:0] array_in2[ROWS-1:0][COLS-1:0][]);
+
     initial begin
         // ============================================================
         // Variables for array_handle1 (test/ops_single)
@@ -71,6 +78,13 @@ module top;
         bit signed [15:0] mvm_da_mat [VEC_LEN-1:0][VEC_LEN-1:0];   // DAC input matrix
         bit signed [15:0] mvm_ad_out [VEC_LEN-1:0];          // ADC output (ideal)
         bit signed [15:0] mvm_ad_out_noisy [VEC_LEN-1:0];    // ADC output (noisy)
+
+        // ============================================================
+        // Variables for array_handle_1d2d_fp32 (photonic_models/mvm_fp32)
+        // ============================================================
+        bit [31:0] fp32_da_vec [VEC_LEN-1:0];                // FP32 input vector
+        bit [31:0] fp32_da_mat [VEC_LEN-1:0][VEC_LEN-1:0];   // FP32 input matrix
+        bit [31:0] fp32_ad_out [VEC_LEN-1:0];                // FP32 output vector
 
         // ============================================================
         // Initialize test data for array_handle1
@@ -107,6 +121,32 @@ module top;
         begin
             // (2*i-5)*10 + (2*j-5)*5 gives values from -75 to +75 with mean=0
             mvm_da_mat[i][j] = 16'(signed'((2*i - 5) * 10 + (2*j - 5) * 5));
+        end
+
+        // ============================================================
+        // Initialize FP32 test data
+        // Vector: [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
+        // IEEE 754 single-precision bit patterns:
+        //   0.5  = 0x3F000000    1.5  = 0x3FC00000
+        //   2.5  = 0x40200000    3.5  = 0x40600000
+        //   4.5  = 0x40900000    5.5  = 0x40B00000
+        // ============================================================
+        fp32_da_vec[0] = 32'h3F000000;  // 0.5
+        fp32_da_vec[1] = 32'h3FC00000;  // 1.5
+        fp32_da_vec[2] = 32'h40200000;  // 2.5
+        fp32_da_vec[3] = 32'h40600000;  // 3.5
+        fp32_da_vec[4] = 32'h40900000;  // 4.5
+        fp32_da_vec[5] = 32'h40B00000;  // 5.5
+
+        // Matrix: simple diagonal-dominant values for easy verification
+        // Row i: diagonal=1.0, off-diagonal=0.1
+        // IEEE 754: 1.0 = 0x3F800000, 0.1 ≈ 0x3DCCCCCD
+        foreach(fp32_da_mat[i, j])
+        begin
+            if (i == j)
+                fp32_da_mat[i][j] = 32'h3F800000;  // 1.0
+            else
+                fp32_da_mat[i][j] = 32'h3DCCCCCD;  // 0.1
         end
 
         // ============================================================
@@ -161,6 +201,24 @@ module top;
         foreach(mvm_ad_out_noisy[i])
         begin
             $display("[SV] mvm_ad_out_realistic[%0d] = %0d", i, $signed(mvm_ad_out_noisy[i]));
+        end
+
+        // Test 6: FP32 MVM (Transformer-style floating point)
+        // Expected output (for diagonal-dominant matrix):
+        //   out[i] = vec[i]*1.0 + sum(vec[j]*0.1 for j!=i)
+        //   out[0] = 0.5*1.0 + (1.5+2.5+3.5+4.5+5.5)*0.1 = 0.5 + 1.75 = 2.25
+        //   out[1] = 1.5*1.0 + (0.5+2.5+3.5+4.5+5.5)*0.1 = 1.5 + 1.65 = 3.15
+        //   out[2] = 2.5*1.0 + (0.5+1.5+3.5+4.5+5.5)*0.1 = 2.5 + 1.55 = 4.05
+        //   ... etc
+        $display("\n[SV] ========== Test: FP32 MVM (model: ideal) ==========");
+        $display("[SV] Input vector (FP32): [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]");
+        $display("[SV] Weight matrix: diagonal=1.0, off-diagonal=0.1");
+        array_handle_1d2d_fp32("photonic_models", "mvm_fp32", "ideal",
+            fp32_ad_out, fp32_da_vec, fp32_da_mat);
+        // Display output as hex (Python side will show float values)
+        foreach(fp32_ad_out[i])
+        begin
+            $display("[SV] fp32_ad_out[%0d] = 0x%08h", i, fp32_ad_out[i]);
         end
 
         deinit_python_env();

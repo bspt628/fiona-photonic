@@ -15,6 +15,8 @@ const PyFileFuncVec pyfilefunc_reg {
     // Available models: ideal, noisy, quantized, mzi_nonlinear, all_effects
     {"photonic_models", "dotp"},
     {"photonic_models", "mvm"},
+    // Floating-point handlers for Transformer models
+    {"photonic_models", "mvm_fp32"},
     // Legacy ideal numerical models (kept for reference)
     {"ideal_numerical", "dotp"},
     {"ideal_numerical", "mvm"}

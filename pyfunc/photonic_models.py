@@ -548,6 +548,61 @@ def mvm(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=N
 
 
 # ============================================================
+# Floating-Point Operations (for Transformer models)
+# ============================================================
+
+@profiler()
+def mvm_fp32(shape_out, matrix_in1, matrix_in2, dtype='float32', model_type='ideal'):
+    """
+    Matrix-vector multiplication with 32-bit floating-point precision.
+
+    Designed for Transformer models where floating-point precision is required
+    to handle outliers in attention mechanisms.
+
+    Args:
+        shape_out: Output shape specification
+        matrix_in1: Input vector (1D, float32 bytes)
+        matrix_in2: Weight matrix (2D, float32 bytes)
+        dtype: Data type (currently only 'float32' supported)
+        model_type: Photonic model type ('ideal', 'mzi_realistic', etc.)
+
+    Returns:
+        Output vector as list of float32 bytes
+    """
+    from .utils.parser import FloatParser
+
+    print(f'[Python] ========== mvm_fp32 (dtype: {dtype}, model: {model_type}) ==========')
+    print(f'[Python] Shape_out = {shape_out}')
+
+    # Parse floating-point inputs
+    parser = FloatParser(shape_out, matrix_in1, matrix_in2, dtype=dtype)
+    vec, mat = parser.get_in()
+
+    print(f'[Python] Input vector shape: {vec.shape}, dtype: {vec.dtype}')
+    print(f'[Python] Input vector: {vec}')
+    print(f'[Python] Weight matrix shape: {mat.shape}, dtype: {mat.dtype}')
+    print(f'[Python] Weight matrix:\n{mat}')
+
+    # Matrix-vector multiplication with photonic model
+    if model_type in ['mzi_realistic', 'all_effects']:
+        model = MZINoiseModel()
+        print(f'[Python] Applying MZI realistic model:')
+        print(f'  - Phase error: {model.phase_error_sigma*100:.1f}%')
+        print(f'  - Insertion loss: {model.insertion_loss_db:.2f} dB/stage x {model.num_stages} stages')
+        result = model.forward(mat, vec, apply_dac=False, apply_adc=False)
+    else:
+        # Ideal computation: y = W @ x
+        result = np.matmul(mat, vec)
+        if model_type != 'ideal':
+            result = apply_photonic_model(result, model_type)
+
+    print(f'[Python] Output vector shape: {result.shape}, dtype: {result.dtype}')
+    print(f'[Python] Output vector: {result}')
+
+    return parser.set_out(result)
+
+
+# ============================================================
 # Model Information
 # ============================================================
 
