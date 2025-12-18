@@ -16,7 +16,8 @@ const PyFileFuncVec pyfilefunc_reg {
     {"photonic_models", "dotp"},
     {"photonic_models", "mvm"},
     // Floating-point handlers for Transformer models
-    {"photonic_models", "mvm_fp32"},
+    {"photonic_models", "mvm_fp32"},           // For Verilator (uses FloatParser with byte data)
+    {"photonic_models", "mvm_fp32_spike"},     // For Spike (uses direct float values)
     // Legacy ideal numerical models (kept for reference)
     {"ideal_numerical", "dotp"},
     {"ideal_numerical", "mvm"}

@@ -43,6 +43,10 @@ from .utils.formatting import format_matrix
 # Configuration from environment variables
 # ============================================================
 
+def get_verbose():
+    """Get verbose output flag. Set FIONA_VERBOSE=1 to enable debug output."""
+    return os.environ.get('FIONA_VERBOSE', '0') == '1'
+
 def get_model_type():
     """Get the selected photonic model type."""
     return os.environ.get('FIONA_PHOTONIC_MODEL', 'ideal')
@@ -404,10 +408,12 @@ def apply_photonic_model(result, model_type=None, W=None, x=None):
     Returns:
         Noisy result
     """
+    verbose = get_verbose()
     if model_type is None:
         model_type = get_model_type()
 
-    print(f'[Photonic Model] Selected model: {model_type}')
+    if verbose:
+        print(f'[Photonic Model] Selected model: {model_type}')
 
     if model_type == 'ideal':
         return result
@@ -415,49 +421,57 @@ def apply_photonic_model(result, model_type=None, W=None, x=None):
     elif model_type == 'noisy':
         # Legacy simple noise model
         sigma = get_noise_sigma()
-        print(f'[Photonic Model] Applying legacy noise (sigma={sigma})')
+        if verbose:
+            print(f'[Photonic Model] Applying legacy noise (sigma={sigma})')
         return apply_noise(result, sigma)
 
     elif model_type == 'mzi_realistic':
         # New realistic MZI model
         if W is None or x is None:
-            print('[Photonic Model] WARNING: W and x required for mzi_realistic, falling back to legacy')
+            if verbose:
+                print('[Photonic Model] WARNING: W and x required for mzi_realistic, falling back to legacy')
             return apply_noise(result, get_phase_error_sigma())
 
         model = MZINoiseModel()
-        print(f'[Photonic Model] Applying realistic MZI model:')
-        print(f'  - Phase error: {model.phase_error_sigma*100:.1f}%')
-        print(f'  - Thermal crosstalk: {model.thermal_crosstalk_sigma*100:.1f}%')
-        print(f'  - Insertion loss: {model.insertion_loss_db:.2f} dB/stage x {model.num_stages} stages')
-        print(f'  - Output crosstalk: {model.crosstalk_db:.1f} dB')
-        print(f'  - Detector noise: {model.detector_noise_sigma*100:.2f}%')
+        if verbose:
+            print(f'[Photonic Model] Applying realistic MZI model:')
+            print(f'  - Phase error: {model.phase_error_sigma*100:.1f}%')
+            print(f'  - Thermal crosstalk: {model.thermal_crosstalk_sigma*100:.1f}%')
+            print(f'  - Insertion loss: {model.insertion_loss_db:.2f} dB/stage x {model.num_stages} stages')
+            print(f'  - Output crosstalk: {model.crosstalk_db:.1f} dB')
+            print(f'  - Detector noise: {model.detector_noise_sigma*100:.2f}%')
         return model.forward(W, x, apply_dac=True, apply_adc=True)
 
     elif model_type == 'quantized':
         bits = get_quant_bits()
-        print(f'[Photonic Model] Applying quantization ({bits}-bit)')
+        if verbose:
+            print(f'[Photonic Model] Applying quantization ({bits}-bit)')
         return apply_quantization(result, bits)
 
     elif model_type == 'mzi_nonlinear':
         extinction_db = get_mzi_extinction_db()
-        print(f'[Photonic Model] Applying MZI nonlinearity (extinction={extinction_db}dB)')
+        if verbose:
+            print(f'[Photonic Model] Applying MZI nonlinearity (extinction={extinction_db}dB)')
         return apply_mzi_nonlinearity(result, extinction_db)
 
     elif model_type == 'all_effects':
         # Use realistic model with all effects
         if W is None or x is None:
-            print('[Photonic Model] WARNING: W and x required for all_effects, using legacy')
+            if verbose:
+                print('[Photonic Model] WARNING: W and x required for all_effects, using legacy')
             sigma = get_noise_sigma()
             bits = get_quant_bits()
             value = apply_quantization(result, bits)
             return apply_noise(value, sigma)
 
         model = MZINoiseModel()
-        print(f'[Photonic Model] Applying all realistic MZI effects')
-        return model.forward(W, x, apply_dac=True, apply_adc=True, verbose=True)
+        if verbose:
+            print(f'[Photonic Model] Applying all realistic MZI effects')
+        return model.forward(W, x, apply_dac=True, apply_adc=True, verbose=verbose)
 
     else:
-        print(f'[Photonic Model] Unknown model "{model_type}", using ideal')
+        if verbose:
+            print(f'[Photonic Model] Unknown model "{model_type}", using ideal')
         return result
 
 
@@ -469,18 +483,22 @@ def apply_photonic_model(result, model_type=None, W=None, x=None):
 def dotp(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=None):
     """Dot product with selectable photonic model."""
     model_type = get_model_type()
-    print(f'[Python] ========== dotp (Model: {model_type}) ==========')
-    print(f'[Python] Shape_out = {shape_out}')
-    print(format_matrix('Matrix_in1 (raw)', matrix_in1))
-    print(format_matrix('Matrix_in2 (raw)', matrix_in2))
+    verbose = get_verbose()
+
+    if verbose:
+        print(f'[Python] ========== dotp (Model: {model_type}) ==========')
+        print(f'[Python] Shape_out = {shape_out}')
+        print(format_matrix('Matrix_in1 (raw)', matrix_in1))
+        print(format_matrix('Matrix_in2 (raw)', matrix_in2))
 
     parser = Parser(shape_out, matrix_in1, matrix_in2, bit_out=bit_out, bit_in1=bit_in1, bit_in2=bit_in2)
     comp_in1, comp_in2 = parser.get_in()
     comp_in1 = comp_in1.squeeze()
     comp_in2 = comp_in2.squeeze()
 
-    print(format_matrix('comp_in1 (parsed)', comp_in1))
-    print(format_matrix('comp_in2 (parsed)', comp_in2))
+    if verbose:
+        print(format_matrix('comp_in1 (parsed)', comp_in1))
+        print(format_matrix('comp_in2 (parsed)', comp_in2))
 
     # Ideal computation
     comp_out = np.dot(comp_in1, comp_in2)
@@ -488,10 +506,11 @@ def dotp(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=
     # Apply photonic model effects
     comp_out = apply_photonic_model(comp_out, model_type)
 
-    print('[Python] `dotp` executed.')
-    print(format_matrix('comp_out (result)', comp_out))
-    retval = parser.set_out(comp_out)
+    if verbose:
+        print('[Python] `dotp` executed.')
+        print(format_matrix('comp_out (result)', comp_out))
 
+    retval = parser.set_out(comp_out)
     return retval
 
 
@@ -515,17 +534,21 @@ def mvm(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=N
     """
     if model_type is None:
         model_type = 'ideal'
-    print(f'[Python] ========== mvm (Model: {model_type}) ==========')
-    print(f'[Python] Shape_out = {shape_out}')
-    print(format_matrix('Vector_in1 (raw)', matrix_in1))
-    print(format_matrix('Matrix_in2 (raw)', matrix_in2))
+    verbose = get_verbose()
+
+    if verbose:
+        print(f'[Python] ========== mvm (Model: {model_type}) ==========')
+        print(f'[Python] Shape_out = {shape_out}')
+        print(format_matrix('Vector_in1 (raw)', matrix_in1))
+        print(format_matrix('Matrix_in2 (raw)', matrix_in2))
 
     parser = Parser(shape_out, matrix_in1, matrix_in2, bit_out=bit_out, bit_in1=bit_in1, bit_in2=bit_in2)
     # Use signed interpretation for input arrays (2's complement)
     comp_in1, comp_in2 = parser.get_in(sign_flag1=True, sign_flag2=True)
 
-    print(format_matrix('comp_in1 (parsed, vector x)', comp_in1))
-    print(format_matrix('comp_in2 (parsed, matrix W)', comp_in2))
+    if verbose:
+        print(format_matrix('comp_in1 (parsed, vector x)', comp_in1))
+        print(format_matrix('comp_in2 (parsed, matrix W)', comp_in2))
 
     # For realistic models, pass W and x to apply_photonic_model
     if model_type in ['mzi_realistic', 'all_effects']:
@@ -540,10 +563,11 @@ def mvm(shape_out, matrix_in1, matrix_in2, bit_out=None, bit_in1=None, bit_in2=N
     if np.issubdtype(comp_in1.dtype, np.integer):
         comp_out = np.round(comp_out).astype(np.int64)
 
-    print('[Python] `mvm` executed.')
-    print(format_matrix('comp_out (result)', comp_out))
-    retval = parser.set_out(comp_out)
+    if verbose:
+        print('[Python] `mvm` executed.')
+        print(format_matrix('comp_out (result)', comp_out))
 
+    retval = parser.set_out(comp_out)
     return retval
 
 
@@ -570,25 +594,29 @@ def mvm_fp32(shape_out, matrix_in1, matrix_in2, dtype='float32', model_type='ide
         Output vector as list of float32 bytes
     """
     from .utils.parser import FloatParser
+    verbose = get_verbose()
 
-    print(f'[Python] ========== mvm_fp32 (dtype: {dtype}, model: {model_type}) ==========')
-    print(f'[Python] Shape_out = {shape_out}')
+    if verbose:
+        print(f'[Python] ========== mvm_fp32 (dtype: {dtype}, model: {model_type}) ==========')
+        print(f'[Python] Shape_out = {shape_out}')
 
     # Parse floating-point inputs
     parser = FloatParser(shape_out, matrix_in1, matrix_in2, dtype=dtype)
     vec, mat = parser.get_in()
 
-    print(f'[Python] Input vector shape: {vec.shape}, dtype: {vec.dtype}')
-    print(f'[Python] Input vector: {vec}')
-    print(f'[Python] Weight matrix shape: {mat.shape}, dtype: {mat.dtype}')
-    print(f'[Python] Weight matrix:\n{mat}')
+    if verbose:
+        print(f'[Python] Input vector shape: {vec.shape}, dtype: {vec.dtype}')
+        print(f'[Python] Input vector: {vec}')
+        print(f'[Python] Weight matrix shape: {mat.shape}, dtype: {mat.dtype}')
+        print(f'[Python] Weight matrix:\n{mat}')
 
     # Matrix-vector multiplication with photonic model
     if model_type in ['mzi_realistic', 'all_effects']:
         model = MZINoiseModel()
-        print(f'[Python] Applying MZI realistic model:')
-        print(f'  - Phase error: {model.phase_error_sigma*100:.1f}%')
-        print(f'  - Insertion loss: {model.insertion_loss_db:.2f} dB/stage x {model.num_stages} stages')
+        if verbose:
+            print(f'[Python] Applying MZI realistic model:')
+            print(f'  - Phase error: {model.phase_error_sigma*100:.1f}%')
+            print(f'  - Insertion loss: {model.insertion_loss_db:.2f} dB/stage x {model.num_stages} stages')
         result = model.forward(mat, vec, apply_dac=False, apply_adc=False)
     else:
         # Ideal computation: y = W @ x
@@ -596,10 +624,64 @@ def mvm_fp32(shape_out, matrix_in1, matrix_in2, dtype='float32', model_type='ide
         if model_type != 'ideal':
             result = apply_photonic_model(result, model_type)
 
-    print(f'[Python] Output vector shape: {result.shape}, dtype: {result.dtype}')
-    print(f'[Python] Output vector: {result}')
+    if verbose:
+        print(f'[Python] Output vector shape: {result.shape}, dtype: {result.dtype}')
+        print(f'[Python] Output vector: {result}')
 
     return parser.set_out(result)
+
+
+@profiler()
+def mvm_fp32_spike(shape_out, matrix_in1, matrix_in2):
+    """
+    Matrix-vector multiplication with 32-bit floating-point precision.
+
+    This version is designed for Spike simulator which passes float values directly
+    (not as raw bytes). Uses the same interface as the int16 mvm function.
+
+    Args:
+        shape_out: Output shape specification (rows, cols)
+        matrix_in1: Input vector (1D, float values)
+        matrix_in2: Weight matrix (2D, float values)
+
+    Returns:
+        Output vector as list of lists of float values
+    """
+    model_type = get_model_type()
+    verbose = get_verbose()
+
+    if verbose:
+        print(f'[Python] ========== mvm_fp32_spike (model: {model_type}) ==========')
+        print(f'[Python] Shape_out = {shape_out}')
+
+    # Convert input lists to numpy arrays
+    vec = np.array(matrix_in1, dtype=np.float32).flatten()
+    mat = np.array(matrix_in2, dtype=np.float32)
+
+    if verbose:
+        print(f'[Python] Input vector shape: {vec.shape}')
+        print(f'[Python] Input vector (first 8): {vec[:8]}...')
+        print(f'[Python] Weight matrix shape: {mat.shape}')
+
+    # Matrix-vector multiplication with photonic model
+    if model_type in ['mzi_realistic', 'all_effects']:
+        model = MZINoiseModel()
+        if verbose:
+            print(f'[Python] Applying MZI realistic model')
+        result = model.forward(mat, vec, apply_dac=False, apply_adc=False)
+    elif model_type == 'noisy':
+        result = np.matmul(mat, vec)
+        result = result + np.random.normal(0, get_noise_sigma(), result.shape)
+    else:
+        # Ideal computation: y = W @ x
+        result = np.matmul(mat, vec)
+
+    if verbose:
+        print(f'[Python] Output vector shape: {result.shape}')
+        print(f'[Python] Output vector (first 8): {result[:8]}...')
+
+    # Return as nested list [[v0], [v1], ...] to match expected format
+    return [[float(v)] for v in result]
 
 
 # ============================================================
