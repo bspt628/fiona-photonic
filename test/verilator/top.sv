@@ -23,7 +23,7 @@ module top;
         output bit[15:0] array_out[ROWS-1:0][1:0][],
         input bit[15:0] array_in[ROWS-1:0][1:0][]);
 
-    // Handler 2: Dual input with padding (ideal_numerical/ops_dual)
+    // Handler 2: Dual input with padding (test/ops_dual)
     import "DPI-C" function void array_handle2(
         string filename, string funcname,
         output bit[15:0] array_out[1:0][COLS-1:0][],
@@ -65,7 +65,7 @@ module top;
         bit [15:0] h1_ad_out [ROWS-1:0][1:0];  // ADC output
 
         // ============================================================
-        // Variables for array_handle2 (ideal_numerical/ops_dual)
+        // Variables for array_handle2 (test/ops_dual)
         // ============================================================
         bit [15:0] h2_da_in1 [ROWS-1:0][1:0];  // DAC input 1
         bit [15:0] h2_da_in2 [1:0][COLS-1:0];  // DAC input 2
@@ -162,9 +162,9 @@ module top;
             $display("[SV] h1_ad_out[%0d][%0d] = %0d", i, j, h1_ad_out[i][j]);
         end
 
-        // Test 2: array_handle2 (ideal_numerical/ops_dual)
-        $display("\n[SV] ========== Test: array_handle2 (ideal_numerical/ops_dual) ==========");
-        array_handle2("ideal_numerical", "ops_dual", h2_ad_out, h2_da_in1, h2_da_in2,
+        // Test 2: array_handle2 (test/ops_dual)
+        $display("\n[SV] ========== Test: array_handle2 (test/ops_dual) ==========");
+        array_handle2("test", "ops_dual", h2_ad_out, h2_da_in1, h2_da_in2,
             32'd2, 32'd6,   // in1: cols=2, rows=6
             32'd6, 32'd2,   // in2: cols=6, rows=2
             32'd6, 32'd2);  // out: cols=6, rows=2

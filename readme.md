@@ -79,8 +79,10 @@ Within the file `bridge/register.h`, add your function defined at the first step
 const PyFileFuncVec pyfilefunc_reg {
     {"test", "ops_single"},
     {"test", "ops_dual"},
-    {"ideal_numerical", "dotp"},
-    {"ideal_numerical", "mvm"},
+    // Selectable photonic models (controlled by FIONA_PHOTONIC_MODEL env var)
+    // Available: ideal (default), noisy, mzi_realistic, quantized, all_effects
+    {"photonic_models", "dotp"},
+    {"photonic_models", "mvm"},
     {"<your_model>", "mrr_dotp"}    // match the file <your_model>.py and function name
 };
 ```

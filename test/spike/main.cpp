@@ -181,7 +181,7 @@ void test_cases() {
         int32_t *raw_out;
         size_t out_rows = 1, out_cols = 1;
 
-        array_handle("ideal_numerical", "dotp", &raw_out, out_rows, out_cols, raw_in1, 6, 1, raw_in2, 6, 1);
+        array_handle("photonic_models", "dotp", &raw_out, out_rows, out_cols, raw_in1, 6, 1, raw_in2, 6, 1);
 
         std::cout << "[C++] Matrix_in1 = \n";
         for(int i = 0; i < 6; ++i) {
@@ -213,7 +213,7 @@ void test_cases() {
         int32_t *raw_out;
         size_t out_rows = 1, out_cols = 1;
 
-        array_handle("ideal_numerical", "mvm", &raw_out, out_rows, out_cols, raw_in2, 6, 1, raw_in1, 1, 6);
+        array_handle("photonic_models", "mvm", &raw_out, out_rows, out_cols, raw_in2, 6, 1, raw_in1, 1, 6);
 
         std::cout << "[C++] Matrix_in1 = \n";
         for(int i = 0; i < 6; ++i) {
