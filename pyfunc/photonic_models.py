@@ -33,10 +33,22 @@ Date: 2025-12-10
 
 import numpy as np
 import os
+import gc
 from scipy.ndimage import gaussian_filter
 from .utils.profiler import profiler
 from .utils.parser import Parser
 from .utils.formatting import format_matrix
+
+# GC optimization settings
+# Set FIONA_GC_INTERVAL to control garbage collection frequency
+# 0 = every call (slowest, lowest memory)
+# N = every N calls (balance)
+# -1 = disabled (fastest, highest memory)
+_gc_call_counter = 0
+
+def get_gc_interval():
+    """Get GC interval. Set FIONA_GC_INTERVAL environment variable."""
+    return int(os.environ.get('FIONA_GC_INTERVAL', '10'))
 
 
 # ============================================================
@@ -647,6 +659,7 @@ def mvm_fp32_spike(shape_out, matrix_in1, matrix_in2):
     Returns:
         Output vector as list of lists of float values
     """
+    global _gc_call_counter
     model_type = get_model_type()
     verbose = get_verbose()
 
@@ -680,8 +693,22 @@ def mvm_fp32_spike(shape_out, matrix_in1, matrix_in2):
         print(f'[Python] Output vector shape: {result.shape}')
         print(f'[Python] Output vector (first 8): {result[:8]}...')
 
-    # Return as nested list [[v0], [v1], ...] to match expected format
-    return [[float(v)] for v in result]
+    # Convert to output format
+    output = [[float(v)] for v in result]
+
+    # Periodic garbage collection to prevent memory accumulation
+    gc_interval = get_gc_interval()
+    if gc_interval >= 0:
+        _gc_call_counter += 1
+        if gc_interval == 0 or _gc_call_counter >= gc_interval:
+            # Delete local numpy arrays before GC
+            del vec, mat, result
+            gc.collect()
+            _gc_call_counter = 0
+            if verbose:
+                print(f'[Python] GC executed')
+
+    return output
 
 
 # ============================================================
