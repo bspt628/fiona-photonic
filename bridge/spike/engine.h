@@ -22,6 +22,7 @@
 #include <map>
 #include <utility>
 #include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
 #include <vector>
 #include <functional>
