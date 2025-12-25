@@ -256,6 +256,50 @@ public:
 // Global batch buffer instance
 static MVMBatchBuffer g_mvm_batch_buffer;
 
+// Flag to track if we're in batch mode (set after first MVM in a batch)
+static bool g_batch_has_pending = false;
+
+/********** External Interface for fiona.cc **********/
+// These functions are called from fiona-spikesim to control batch processing
+
+// Flush all pending MVM requests
+inline void batch_flush() {
+    if (g_mvm_batch_buffer.size() > 0) {
+        g_mvm_batch_buffer.flush(pyfunc_map);
+        g_batch_has_pending = false;
+    }
+}
+
+// Check if batch processing is enabled
+inline bool batch_is_enabled() {
+    return g_mvm_batch_buffer.is_enabled();
+}
+
+// Get number of pending requests
+inline size_t batch_pending_count() {
+    return g_mvm_batch_buffer.size();
+}
+
+// Add MVM request to batch and return result
+// This is the main entry point for batched MVM from fiona.cc
+inline int16_t* batch_mvm(int16_t* mat, int16_t* vec, size_t vlen, size_t& out_rows) {
+    size_t req_id = g_mvm_batch_buffer.add_request(mat, vec, vlen);
+    g_batch_has_pending = true;
+
+    // Check if we should auto-flush (batch full)
+    if (g_mvm_batch_buffer.should_flush()) {
+        g_mvm_batch_buffer.flush(pyfunc_map);
+        g_batch_has_pending = false;
+    }
+
+    // If results are available, return them
+    // Otherwise, flush now to get results (for immediate use)
+    size_t rows, cols;
+    int16_t* result = g_mvm_batch_buffer.get_result(req_id, rows, cols, pyfunc_map);
+    out_rows = rows;
+    return result;
+}
+
 
 /********** Conversion between EigenMatrix and PointerBuffer **********/
 #ifdef USE_EIGEN
