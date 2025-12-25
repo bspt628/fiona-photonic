@@ -15,6 +15,8 @@ const PyFileFuncVec pyfilefunc_reg {
     // Available models: ideal (default), noisy, mzi_realistic, quantized, all_effects
     {"photonic_models", "dotp"},
     {"photonic_models", "mvm"},
+    // Batched MVM for simulation optimization (reduces Python call overhead)
+    {"photonic_models", "mvm_batched"},
     // Floating-point handlers for Transformer models
     {"photonic_models", "mvm_fp32"},           // For Verilator (uses FloatParser with byte data)
     {"photonic_models", "mvm_fp32_spike"}      // For Spike (uses direct float values)

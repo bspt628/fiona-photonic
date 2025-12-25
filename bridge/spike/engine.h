@@ -23,6 +23,8 @@
 #include <utility>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <vector>
+#include <functional>
 
 #ifdef USE_EIGEN
 // Eigen Library Header
@@ -37,6 +39,222 @@ extern const PyFileFuncVec pyfilefunc_reg;
 
 typedef std::map<PyFileFunc, PyObject*> PyFuncMap;
 PyFuncMap pyfunc_map;
+
+
+/********** MVM Batch Buffer for Simulation Optimization **********/
+/*
+ * This buffer collects MVM requests and processes them in batches,
+ * reducing Python call overhead from ~50ms per call to ~50ms per batch.
+ *
+ * Design: Option B (Bridge Layer Buffering)
+ * - fiona-spikesim (fiona.cc) remains unchanged
+ * - Buffering logic is contained within fiona-photonic
+ *
+ * Environment variables:
+ * - FIONA_BATCH_ENABLED: 1 (default) or 0
+ * - FIONA_BATCH_SIZE: max batch size, default 256
+ * - FIONA_BATCH_DEBUG: 1 to enable debug output
+ */
+
+#define FIONA_VLEN_MAX 32
+
+struct MVMRequest {
+    int16_t mat[FIONA_VLEN_MAX * FIONA_VLEN_MAX];
+    int16_t vec[FIONA_VLEN_MAX];
+    size_t vlen;
+};
+
+struct MVMResult {
+    int16_t* data;
+    size_t rows;
+    size_t cols;
+};
+
+class MVMBatchBuffer {
+private:
+    std::vector<MVMRequest> requests;
+    std::vector<MVMResult> results;
+    size_t next_result_idx;
+    size_t max_batch_size;
+    bool enabled;
+    bool debug;
+
+    static bool get_env_bool(const char* name, bool default_val) {
+        const char* val = std::getenv(name);
+        if (val == nullptr) return default_val;
+        return std::string(val) == "1";
+    }
+
+    static size_t get_env_size(const char* name, size_t default_val) {
+        const char* val = std::getenv(name);
+        if (val == nullptr) return default_val;
+        return std::stoul(val);
+    }
+
+public:
+    MVMBatchBuffer() : next_result_idx(0) {
+        enabled = get_env_bool("FIONA_BATCH_ENABLED", true);
+        max_batch_size = get_env_size("FIONA_BATCH_SIZE", 256);
+        debug = get_env_bool("FIONA_BATCH_DEBUG", false);
+
+        if (debug) {
+            std::cout << "[BATCH] Initialized: enabled=" << enabled
+                      << ", max_size=" << max_batch_size << std::endl;
+        }
+    }
+
+    bool is_enabled() const { return enabled; }
+
+    // Add a request to the buffer
+    size_t add_request(int16_t* mat, int16_t* vec, size_t vlen) {
+        MVMRequest req;
+        std::memcpy(req.mat, mat, FIONA_VLEN_MAX * FIONA_VLEN_MAX * sizeof(int16_t));
+        std::memcpy(req.vec, vec, FIONA_VLEN_MAX * sizeof(int16_t));
+        req.vlen = vlen;
+        requests.push_back(req);
+
+        if (debug) {
+            std::cout << "[BATCH] Added request #" << (requests.size() - 1)
+                      << ", buffer size: " << requests.size() << std::endl;
+        }
+
+        return requests.size() - 1;
+    }
+
+    // Check if buffer should be flushed
+    bool should_flush() const {
+        return requests.size() >= max_batch_size;
+    }
+
+    // Get current buffer size
+    size_t size() const { return requests.size(); }
+
+    // Flush: call Python mvm_batched and store results
+    void flush(PyFuncMap& pyfunc_map) {
+        if (requests.empty()) return;
+
+        if (debug) {
+            std::cout << "[BATCH] Flushing " << requests.size() << " requests" << std::endl;
+        }
+
+        // Build Python list of dicts for batch
+        PyObject* batch_list = PyList_New(requests.size());
+
+        for (size_t i = 0; i < requests.size(); i++) {
+            PyObject* item = PyDict_New();
+
+            // 'mat': flattened matrix as list
+            PyObject* mat_list = PyList_New(FIONA_VLEN_MAX * FIONA_VLEN_MAX);
+            for (size_t j = 0; j < FIONA_VLEN_MAX * FIONA_VLEN_MAX; j++) {
+                PyList_SetItem(mat_list, j, PyLong_FromLong(requests[i].mat[j]));
+            }
+
+            // 'vec': vector as list
+            PyObject* vec_list = PyList_New(FIONA_VLEN_MAX);
+            for (size_t j = 0; j < FIONA_VLEN_MAX; j++) {
+                PyList_SetItem(vec_list, j, PyLong_FromLong(requests[i].vec[j]));
+            }
+
+            PyDict_SetItemString(item, "mat", mat_list);
+            PyDict_SetItemString(item, "vec", vec_list);
+            PyDict_SetItemString(item, "vlen", PyLong_FromLong(requests[i].vlen));
+            PyDict_SetItemString(item, "rd", PyLong_FromLong(i));
+
+            PyList_SetItem(batch_list, i, item);
+
+            Py_DecRef(mat_list);
+            Py_DecRef(vec_list);
+        }
+
+        // Call Python mvm_batched
+        PyObject* callable = pyfunc_map[PyFileFunc("photonic_models", "mvm_batched")];
+        if (callable && PyCallable_Check(callable)) {
+            PyObject* args = PyTuple_Pack(1, batch_list);
+            PyObject* ret_obj = PyObject_CallObject(callable, args);
+
+            if (ret_obj == nullptr) {
+                PyErr_Print();
+                std::cerr << "[BATCH] Error calling mvm_batched" << std::endl;
+                Py_DecRef(args);
+                Py_DecRef(batch_list);
+                return;
+            }
+
+            // Parse results: list of dicts with 'result' and 'rd'
+            size_t num_results = PyList_Size(ret_obj);
+            results.clear();
+            results.resize(num_results);
+
+            for (size_t i = 0; i < num_results; i++) {
+                PyObject* result_item = PyList_GetItem(ret_obj, i);
+                PyObject* result_list = PyDict_GetItemString(result_item, "result");
+                size_t result_size = PyList_Size(result_list);
+
+                int16_t* result_data = new int16_t[result_size];
+                for (size_t j = 0; j < result_size; j++) {
+                    result_data[j] = (int16_t)PyLong_AsLong(PyList_GetItem(result_list, j));
+                }
+
+                results[i].data = result_data;
+                results[i].rows = result_size;
+                results[i].cols = 1;
+            }
+
+            Py_DecRef(ret_obj);
+            Py_DecRef(args);
+        }
+
+        Py_DecRef(batch_list);
+
+        // Reset for next batch
+        requests.clear();
+        next_result_idx = 0;
+
+        if (debug) {
+            std::cout << "[BATCH] Flush complete, " << results.size() << " results ready" << std::endl;
+        }
+    }
+
+    // Get result for a specific request
+    // If not yet flushed, triggers flush first
+    int16_t* get_result(size_t request_id, size_t& rows, size_t& cols, PyFuncMap& pyfunc_map) {
+        // If results not ready, flush now
+        if (results.empty() || request_id >= results.size()) {
+            flush(pyfunc_map);
+        }
+
+        if (request_id < results.size()) {
+            rows = results[request_id].rows;
+            cols = results[request_id].cols;
+            return results[request_id].data;
+        }
+
+        // Fallback: should not happen
+        std::cerr << "[BATCH] Warning: result not found for request " << request_id << std::endl;
+        rows = 0;
+        cols = 0;
+        return nullptr;
+    }
+
+    // Clear all cached results (call when done with current batch)
+    void clear_results() {
+        for (auto& r : results) {
+            if (r.data) {
+                delete[] r.data;
+                r.data = nullptr;
+            }
+        }
+        results.clear();
+        next_result_idx = 0;
+    }
+
+    ~MVMBatchBuffer() {
+        clear_results();
+    }
+};
+
+// Global batch buffer instance
+static MVMBatchBuffer g_mvm_batch_buffer;
 
 
 /********** Conversion between EigenMatrix and PointerBuffer **********/
