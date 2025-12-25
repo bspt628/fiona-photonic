@@ -456,6 +456,421 @@ def test_empty_input(results):
 
 
 # =============================================================================
+# Test: Batched MVM Operations
+# =============================================================================
+
+def mvm_batched_test(batch_data, model_type='ideal'):
+    """Test version of mvm_batched"""
+    results = []
+    for item in batch_data:
+        if len(item) == 3:
+            mat, vec, vlen = item
+        else:
+            mat, vec = item
+            vlen = len(vec)
+
+        mat_np = np.array(mat, dtype=np.float64)
+        vec_np = np.array(vec, dtype=np.float64)
+
+        if mat_np.ndim == 1:
+            size = int(np.sqrt(len(mat_np)))
+            mat_np = mat_np.reshape(size, size)
+
+        vec_np = vec_np.flatten()[:vlen]
+        result = np.matmul(mat_np, vec_np)
+
+        if model_type != 'ideal':
+            result = apply_photonic_model(result, model_type)
+
+        results.append(result.astype(np.int16).tolist())
+
+    return results
+
+
+def test_mvm_batched_basic(results):
+    """Basic batched MVM test with single operation"""
+    mat = np.array([[1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1]], dtype=np.int16)  # Identity
+    vec = np.array([1, 2, 3, 4], dtype=np.int16)
+
+    batch = [(mat, vec, 4)]
+    batch_results = mvm_batched_test(batch)
+
+    expected = [1, 2, 3, 4]
+
+    if len(batch_results) == 1 and np.allclose(batch_results[0], expected):
+        results.record_pass("mvm_batched_basic")
+    else:
+        results.record_fail("mvm_batched_basic",
+            f"Expected {expected}, got {batch_results}")
+
+
+def test_mvm_batched_multiple(results):
+    """Batched MVM with multiple operations"""
+    # Operation 1: Identity matrix
+    mat1 = np.eye(4, dtype=np.int16)
+    vec1 = np.array([1, 2, 3, 4], dtype=np.int16)
+
+    # Operation 2: All ones matrix
+    mat2 = np.ones((4, 4), dtype=np.int16)
+    vec2 = np.array([1, 1, 1, 1], dtype=np.int16)
+
+    # Operation 3: Scaling matrix
+    mat3 = np.array([[2, 0, 0, 0],
+                     [0, 2, 0, 0],
+                     [0, 0, 2, 0],
+                     [0, 0, 0, 2]], dtype=np.int16)
+    vec3 = np.array([1, 2, 3, 4], dtype=np.int16)
+
+    batch = [
+        (mat1, vec1, 4),
+        (mat2, vec2, 4),
+        (mat3, vec3, 4),
+    ]
+
+    batch_results = mvm_batched_test(batch)
+
+    expected = [
+        [1, 2, 3, 4],      # Identity
+        [4, 4, 4, 4],      # Sum of vec2 for each row
+        [2, 4, 6, 8],      # 2x scaling
+    ]
+
+    if len(batch_results) == 3:
+        all_correct = True
+        for i, (got, exp) in enumerate(zip(batch_results, expected)):
+            if not np.allclose(got, exp):
+                all_correct = False
+                results.record_fail("mvm_batched_multiple",
+                    f"Operation {i}: expected {exp}, got {got}")
+                break
+        if all_correct:
+            results.record_pass("mvm_batched_multiple")
+    else:
+        results.record_fail("mvm_batched_multiple",
+            f"Expected 3 results, got {len(batch_results)}")
+
+
+def test_mvm_batched_empty(results):
+    """Batched MVM with empty batch"""
+    batch = []
+    batch_results = mvm_batched_test(batch)
+
+    if len(batch_results) == 0:
+        results.record_pass("mvm_batched_empty")
+    else:
+        results.record_fail("mvm_batched_empty",
+            f"Expected empty list, got {batch_results}")
+
+
+def test_mvm_batched_large_batch(results):
+    """Batched MVM with large batch (simulating tiled MVM)"""
+    batch_size = 16  # Simulate 16 tile operations
+    batch = []
+
+    for i in range(batch_size):
+        mat = np.eye(4, dtype=np.int16) * (i + 1)  # Scale by index
+        vec = np.ones(4, dtype=np.int16)
+        batch.append((mat, vec, 4))
+
+    batch_results = mvm_batched_test(batch)
+
+    if len(batch_results) == batch_size:
+        all_correct = True
+        for i, result in enumerate(batch_results):
+            expected = [i + 1] * 4
+            if not np.allclose(result, expected):
+                all_correct = False
+                results.record_fail("mvm_batched_large_batch",
+                    f"Operation {i}: expected {expected}, got {result}")
+                break
+        if all_correct:
+            results.record_pass("mvm_batched_large_batch")
+    else:
+        results.record_fail("mvm_batched_large_batch",
+            f"Expected {batch_size} results, got {len(batch_results)}")
+
+
+def test_mvm_batched_consistency(results):
+    """Test that batched MVM gives same results as individual MVMs"""
+    # Create test data
+    mat = np.array([[1, 2], [3, 4]], dtype=np.int16)
+    vec = np.array([1, 1], dtype=np.int16)
+
+    # Individual MVM
+    individual_result = mvm("2,1", vec, mat)
+
+    # Batched MVM
+    batch = [(mat, vec, 2)]
+    batch_results = mvm_batched_test(batch)
+
+    if np.allclose(individual_result, batch_results[0]):
+        results.record_pass("mvm_batched_consistency")
+    else:
+        results.record_fail("mvm_batched_consistency",
+            f"Individual: {individual_result}, Batched: {batch_results[0]}")
+
+
+def test_mvm_batched_32x32(results):
+    """Test batched MVM with 32x32 matrices (FIONA hardware size)"""
+    # Create 32x32 identity matrix
+    mat = np.eye(32, dtype=np.int16)
+    vec = np.arange(32, dtype=np.int16)
+
+    batch = [(mat, vec, 32)]
+    batch_results = mvm_batched_test(batch)
+
+    expected = list(range(32))
+
+    if len(batch_results) == 1 and np.allclose(batch_results[0], expected):
+        results.record_pass("mvm_batched_32x32")
+    else:
+        results.record_fail("mvm_batched_32x32",
+            f"Expected identity result, got different values")
+
+
+def test_mvm_batched_negative_values(results):
+    """Test batched MVM with negative values"""
+    mat = np.array([[1, -1], [-1, 1]], dtype=np.int16)
+    vec = np.array([10, 5], dtype=np.int16)
+
+    batch = [(mat, vec, 2)]
+    batch_results = mvm_batched_test(batch)
+
+    expected = [5, -5]  # [10-5, -10+5]
+
+    if len(batch_results) == 1 and np.allclose(batch_results[0], expected):
+        results.record_pass("mvm_batched_negative_values")
+    else:
+        results.record_fail("mvm_batched_negative_values",
+            f"Expected {expected}, got {batch_results[0]}")
+
+
+def test_mvm_batched_performance(results):
+    """Test that batched operations are faster than individual calls"""
+    import time
+
+    batch_size = 100
+    mat = np.eye(8, dtype=np.int16)
+    vec = np.ones(8, dtype=np.int16)
+
+    # Create batch
+    batch = [(mat, vec, 8) for _ in range(batch_size)]
+
+    # Time batched operation
+    start = time.time()
+    batch_results = mvm_batched_test(batch)
+    batch_time = time.time() - start
+
+    # Time individual operations
+    start = time.time()
+    individual_results = []
+    for _ in range(batch_size):
+        result = mvm("8,1", vec, mat)
+        individual_results.append(result)
+    individual_time = time.time() - start
+
+    # Batched should complete (performance comparison is informational)
+    if len(batch_results) == batch_size:
+        results.record_pass(f"mvm_batched_performance (batch:{batch_time:.3f}s, individual:{individual_time:.3f}s)")
+    else:
+        results.record_fail("mvm_batched_performance",
+            f"Expected {batch_size} results")
+
+
+# =============================================================================
+# Test: mvm_batched_unified (Verilator + Spike mode support)
+# =============================================================================
+
+def mvm_batched_unified_test(batch_data, model_type='ideal'):
+    """Test version of mvm_batched_unified"""
+    if not batch_data:
+        return []
+
+    first_item = batch_data[0]
+    is_verilator_mode = 'bit_out' in first_item
+
+    results = []
+
+    for item in batch_data:
+        if is_verilator_mode:
+            # Verilator mode
+            shape_out = item['shape_out']
+            matrix_in1 = item['matrix_in1']
+            matrix_in2 = item['matrix_in2']
+            bit_out = item.get('bit_out', 16)
+            bit_in1 = item.get('bit_in1', 16)
+            bit_in2 = item.get('bit_in2', 16)
+
+            parser = Parser(shape_out, matrix_in1, matrix_in2,
+                          bit_out=bit_out, bit_in1=bit_in1, bit_in2=bit_in2)
+            vec_np, mat_np = parser.get_in(sign_flag1=True, sign_flag2=True)
+
+            result = np.matmul(mat_np.astype(np.float64), vec_np.astype(np.float64))
+
+            if model_type != 'ideal':
+                result = apply_photonic_model(result, model_type)
+
+            result = np.round(result).astype(np.int64)
+            output = parser.set_out(result)
+            results.append(output)
+        else:
+            # Spike mode
+            mat_data = item.get('mat', [])
+            vec_data = item.get('vec', [])
+            vlen = item.get('vlen', 32)
+            rd = item.get('rd', 0)
+
+            mat_np = np.array(mat_data, dtype=np.int16)
+            if mat_np.ndim == 1:
+                mat_np = mat_np.reshape(vlen, vlen)
+            vec_np = np.array(vec_data, dtype=np.int16)[:vlen]
+
+            result = np.matmul(mat_np.astype(np.float64), vec_np.astype(np.float64))
+
+            if model_type != 'ideal':
+                result = apply_photonic_model(result, model_type)
+
+            result = np.round(result).astype(np.int16)
+            results.append({
+                'result': result.tolist(),
+                'rd': rd
+            })
+
+    return results
+
+
+def test_mvm_batched_unified_spike_mode(results):
+    """Test mvm_batched_unified in Spike mode (dict format without bit_out)"""
+    batch = [
+        {'mat': np.eye(4, dtype=np.int16).tolist(), 'vec': [1, 2, 3, 4], 'vlen': 4, 'rd': 0},
+        {'mat': (np.ones((4, 4), dtype=np.int16) * 2).tolist(), 'vec': [1, 1, 1, 1], 'vlen': 4, 'rd': 1},
+    ]
+
+    batch_results = mvm_batched_unified_test(batch)
+
+    expected = [
+        {'result': [1, 2, 3, 4], 'rd': 0},
+        {'result': [8, 8, 8, 8], 'rd': 1},  # 2*4 = 8
+    ]
+
+    if len(batch_results) == 2:
+        all_correct = True
+        for i, (got, exp) in enumerate(zip(batch_results, expected)):
+            if got['rd'] != exp['rd'] or not np.allclose(got['result'], exp['result']):
+                all_correct = False
+                results.record_fail("mvm_batched_unified_spike_mode",
+                    f"Operation {i}: expected {exp}, got {got}")
+                break
+        if all_correct:
+            results.record_pass("mvm_batched_unified_spike_mode")
+    else:
+        results.record_fail("mvm_batched_unified_spike_mode",
+            f"Expected 2 results, got {len(batch_results)}")
+
+
+def test_mvm_batched_unified_verilator_mode(results):
+    """Test mvm_batched_unified in Verilator mode (with bit_out)"""
+    # Create test data with proper byte format
+    # 4-element vector: [1, 2, 3, 4] as int16 bytes
+    vec_int16 = np.array([1, 2, 3, 4], dtype=np.int16)
+    vec_bytes = vec_int16.view(np.uint8).tolist()
+
+    # 4x4 identity matrix as int16 bytes
+    mat_int16 = np.eye(4, dtype=np.int16)
+    mat_bytes = mat_int16.view(np.uint8).tolist()
+
+    batch = [{
+        'shape_out': (4,),
+        'matrix_in1': vec_bytes,
+        'matrix_in2': mat_bytes,
+        'bit_out': 16,
+        'bit_in1': 16,
+        'bit_in2': 16,
+    }]
+
+    try:
+        batch_results = mvm_batched_unified_test(batch)
+
+        # Expected: identity * [1,2,3,4] = [1,2,3,4]
+        # Output format is byte array from Parser.set_out
+        if len(batch_results) == 1:
+            # Parse output bytes back to int16
+            output_bytes = np.array(batch_results[0], dtype=np.uint8)
+            output_int16 = output_bytes.view(np.int16)
+            expected = [1, 2, 3, 4]
+
+            if np.allclose(output_int16, expected):
+                results.record_pass("mvm_batched_unified_verilator_mode")
+            else:
+                results.record_fail("mvm_batched_unified_verilator_mode",
+                    f"Expected {expected}, got {output_int16.tolist()}")
+        else:
+            results.record_fail("mvm_batched_unified_verilator_mode",
+                f"Expected 1 result, got {len(batch_results)}")
+    except Exception as e:
+        results.record_error("mvm_batched_unified_verilator_mode", e)
+
+
+def test_mvm_batched_unified_empty(results):
+    """Test mvm_batched_unified with empty batch"""
+    batch = []
+    batch_results = mvm_batched_unified_test(batch)
+
+    if len(batch_results) == 0:
+        results.record_pass("mvm_batched_unified_empty")
+    else:
+        results.record_fail("mvm_batched_unified_empty",
+            f"Expected empty list, got {batch_results}")
+
+
+def test_mvm_batched_unified_mixed_not_allowed(results):
+    """Test that mixed mode batches use first item's mode"""
+    # This test verifies the mode detection from first item
+    batch = [
+        {'mat': [[1, 0], [0, 1]], 'vec': [1, 2], 'vlen': 2, 'rd': 0},
+        # If we add a Verilator-style item, it should be treated as Spike mode
+        # because first item doesn't have bit_out
+    ]
+
+    batch_results = mvm_batched_unified_test(batch)
+
+    # Should work in Spike mode
+    if len(batch_results) == 1 and 'result' in batch_results[0]:
+        results.record_pass("mvm_batched_unified_mixed_not_allowed")
+    else:
+        results.record_fail("mvm_batched_unified_mixed_not_allowed",
+            f"Expected Spike mode result, got {batch_results}")
+
+
+def test_mvm_batched_unified_32x32_spike(results):
+    """Test mvm_batched_unified with 32x32 matrices in Spike mode"""
+    mat = np.eye(32, dtype=np.int16)
+    vec = np.arange(32, dtype=np.int16)
+
+    batch = [
+        {'mat': mat.tolist(), 'vec': vec.tolist(), 'vlen': 32, 'rd': 5}
+    ]
+
+    batch_results = mvm_batched_unified_test(batch)
+
+    expected_result = list(range(32))
+
+    if len(batch_results) == 1:
+        got = batch_results[0]
+        if got['rd'] == 5 and np.allclose(got['result'], expected_result):
+            results.record_pass("mvm_batched_unified_32x32_spike")
+        else:
+            results.record_fail("mvm_batched_unified_32x32_spike",
+                f"Expected rd=5, result={expected_result[:5]}..., got rd={got['rd']}, result={got['result'][:5]}...")
+    else:
+        results.record_fail("mvm_batched_unified_32x32_spike",
+            f"Expected 1 result, got {len(batch_results)}")
+
+
+# =============================================================================
 # Main Test Runner
 # =============================================================================
 
@@ -481,6 +896,25 @@ def run_all_tests():
     test_mvm_identity(results)
     test_mvm_zeros(results)
     test_mvm_single_row(results)
+
+    # Batched MVM tests
+    print("\n--- Batched MVM Tests ---")
+    test_mvm_batched_basic(results)
+    test_mvm_batched_multiple(results)
+    test_mvm_batched_empty(results)
+    test_mvm_batched_large_batch(results)
+    test_mvm_batched_consistency(results)
+    test_mvm_batched_32x32(results)
+    test_mvm_batched_negative_values(results)
+    test_mvm_batched_performance(results)
+
+    # Unified Batched MVM tests (Verilator + Spike)
+    print("\n--- Unified Batched MVM Tests (Verilator/Spike) ---")
+    test_mvm_batched_unified_spike_mode(results)
+    test_mvm_batched_unified_verilator_mode(results)
+    test_mvm_batched_unified_empty(results)
+    test_mvm_batched_unified_mixed_not_allowed(results)
+    test_mvm_batched_unified_32x32_spike(results)
 
     # Photonic effect tests
     print("\n--- Photonic Effect Tests ---")

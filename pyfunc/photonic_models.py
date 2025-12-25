@@ -640,6 +640,295 @@ def mvm_fp32_spike(shape_out, matrix_in1, matrix_in2):
 
 
 # ============================================================
+# Batched Operations (for Spike simulation optimization)
+# ============================================================
+
+def mvm_batched(batch_data, model_type=None):
+    """
+    Batched Matrix-Vector Multiplication for simulation optimization.
+
+    This function processes multiple MVM operations in a single Python call,
+    reducing the IPC overhead between Spike simulator and Python.
+
+    The ISA remains unchanged - this is purely a simulation-level optimization.
+    Real hardware would process each MVM individually at nanosecond speeds.
+
+    Args:
+        batch_data: List of tuples, each containing:
+            - mat: 2D numpy array or list (matrix)
+            - vec: 1D numpy array or list (vector)
+            - vlen: int (vector length, for compatibility)
+        model_type: Optional photonic model type override
+
+    Returns:
+        List of result arrays, one per input MVM operation
+
+    Example:
+        >>> batch = [
+        ...     (np.eye(4), np.array([1,2,3,4]), 4),
+        ...     (np.ones((4,4)), np.array([1,1,1,1]), 4),
+        ... ]
+        >>> results = mvm_batched(batch)
+        >>> len(results)
+        2
+    """
+    global _gc_call_counter
+
+    if model_type is None:
+        model_type = get_model_type()
+
+    log_model_info_once()
+    verbose = should_log_verbose()
+
+    if verbose:
+        print(f'[Python] mvm_batched: batch_size={len(batch_data)}, model={model_type}')
+
+    results = []
+
+    for item in batch_data:
+        # Unpack item - support both (mat, vec, vlen) and (mat, vec) formats
+        if len(item) == 3:
+            mat, vec, vlen = item
+        else:
+            mat, vec = item
+            vlen = len(vec)
+
+        # Convert to numpy arrays
+        mat_np = np.array(mat, dtype=np.int16) if not isinstance(mat, np.ndarray) else mat
+        vec_np = np.array(vec, dtype=np.int16) if not isinstance(vec, np.ndarray) else vec
+
+        # Ensure proper shapes
+        if mat_np.ndim == 1:
+            # Flatten matrix was passed, reshape to 2D
+            size = int(np.sqrt(len(mat_np)))
+            mat_np = mat_np.reshape(size, size)
+
+        vec_np = vec_np.flatten()[:vlen]
+
+        # Apply photonic model
+        if model_type in ['mzi_realistic', 'all_effects']:
+            model = MZINoiseModel()
+            result = model.forward(mat_np.astype(np.float64), vec_np.astype(np.float64),
+                                   apply_dac=True, apply_adc=True)
+        else:
+            result = np.matmul(mat_np.astype(np.float64), vec_np.astype(np.float64))
+            if model_type != 'ideal':
+                result = apply_photonic_model(result, model_type)
+
+        # Convert to int16 for compatibility
+        result = np.round(result).astype(np.int16)
+        results.append(result.tolist())
+
+    # Periodic garbage collection
+    gc_interval = get_gc_interval()
+    if gc_interval >= 0:
+        _gc_call_counter += 1
+        if gc_interval == 0 or _gc_call_counter >= gc_interval:
+            gc.collect()
+            _gc_call_counter = 0
+
+    if verbose:
+        print(f'[Python] mvm_batched: completed {len(results)} operations')
+
+    return results
+
+
+def mvm_batched_int16(batch_data, model_type=None):
+    """
+    Batched MVM specifically for INT16 operations (Spike simulator).
+
+    Optimized version that assumes int16 input/output for Spike integration.
+
+    Args:
+        batch_data: List of dicts with keys:
+            - 'mat': flattened matrix data (list of int16)
+            - 'vec': vector data (list of int16)
+            - 'vlen': vector length
+            - 'rd': destination register (for tracking)
+
+    Returns:
+        List of dicts with keys:
+            - 'result': output vector (list of int16)
+            - 'rd': destination register
+    """
+    if model_type is None:
+        model_type = get_model_type()
+
+    results = []
+
+    for req in batch_data:
+        mat_flat = req.get('mat', [])
+        vec = req.get('vec', [])
+        vlen = req.get('vlen', 32)
+        rd = req.get('rd', 0)
+
+        # Reshape matrix
+        mat_np = np.array(mat_flat, dtype=np.int16).reshape(vlen, vlen)
+        vec_np = np.array(vec, dtype=np.int16)[:vlen]
+
+        # Compute MVM
+        if model_type in ['mzi_realistic', 'all_effects']:
+            model = MZINoiseModel()
+            result = model.forward(mat_np.astype(np.float64), vec_np.astype(np.float64),
+                                   apply_dac=True, apply_adc=True)
+        else:
+            result = np.matmul(mat_np.astype(np.float64), vec_np.astype(np.float64))
+            if model_type != 'ideal':
+                result = apply_photonic_model(result, model_type)
+
+        result = np.round(result).astype(np.int16)
+
+        results.append({
+            'result': result.tolist(),
+            'rd': rd
+        })
+
+    return results
+
+
+def mvm_batched_unified(batch_data, model_type=None):
+    """
+    Unified batched MVM supporting both Verilator and Spike modes.
+
+    Uses Parser class internally for proper data conversion between
+    SystemVerilog (Verilator) and Python.
+
+    Mode detection:
+    - Verilator mode: When batch items contain 'bit_out', 'bit_in1', 'bit_in2'
+    - Spike mode: When batch items contain only matrix/vector data
+
+    Args:
+        batch_data: List of dicts with keys:
+            Verilator mode:
+                - 'shape_out': Output shape specification
+                - 'matrix_in1': Input vector (raw bytes)
+                - 'matrix_in2': Input matrix (raw bytes)
+                - 'bit_out': Output bit width (e.g., 16)
+                - 'bit_in1': Input1 bit width
+                - 'bit_in2': Input2 bit width
+            Spike mode:
+                - 'mat': Matrix data (list of int16)
+                - 'vec': Vector data (list of int16)
+                - 'vlen': Vector length
+                - 'rd': Destination register (optional)
+
+    Returns:
+        Verilator mode: List of output arrays in SV byte format
+        Spike mode: List of dicts with 'result' and 'rd'
+
+    Example (Verilator):
+        >>> batch = [{
+        ...     'shape_out': (4,),
+        ...     'matrix_in1': [bytes],
+        ...     'matrix_in2': [bytes],
+        ...     'bit_out': 16,
+        ...     'bit_in1': 16,
+        ...     'bit_in2': 16
+        ... }]
+        >>> results = mvm_batched_unified(batch)
+
+    Example (Spike):
+        >>> batch = [{'mat': [...], 'vec': [...], 'vlen': 32, 'rd': 0}]
+        >>> results = mvm_batched_unified(batch)
+    """
+    global _gc_call_counter
+
+    if model_type is None:
+        model_type = get_model_type()
+
+    log_model_info_once()
+    verbose = should_log_verbose()
+
+    if not batch_data:
+        return []
+
+    # Detect mode from first item
+    first_item = batch_data[0]
+    is_verilator_mode = 'bit_out' in first_item
+
+    if verbose:
+        mode_str = "Verilator" if is_verilator_mode else "Spike"
+        print(f'[Python] mvm_batched_unified: mode={mode_str}, batch_size={len(batch_data)}, model={model_type}')
+
+    results = []
+
+    for item in batch_data:
+        if is_verilator_mode:
+            # Verilator mode: use Parser for byte conversion
+            shape_out = item['shape_out']
+            matrix_in1 = item['matrix_in1']
+            matrix_in2 = item['matrix_in2']
+            bit_out = item.get('bit_out', 16)
+            bit_in1 = item.get('bit_in1', 16)
+            bit_in2 = item.get('bit_in2', 16)
+
+            parser = Parser(shape_out, matrix_in1, matrix_in2,
+                          bit_out=bit_out, bit_in1=bit_in1, bit_in2=bit_in2)
+            # Use signed interpretation for 2's complement
+            vec_np, mat_np = parser.get_in(sign_flag1=True, sign_flag2=True)
+
+            # Apply photonic model
+            if model_type in ['mzi_realistic', 'all_effects']:
+                model = MZINoiseModel()
+                result = model.forward(mat_np.astype(np.float64), vec_np.astype(np.float64),
+                                       apply_dac=True, apply_adc=True)
+            else:
+                result = np.matmul(mat_np.astype(np.float64), vec_np.astype(np.float64))
+                if model_type != 'ideal':
+                    result = apply_photonic_model(result, model_type)
+
+            # Convert back to integer
+            result = np.round(result).astype(np.int64)
+
+            # Use Parser.set_out for proper output formatting
+            output = parser.set_out(result)
+            results.append(output)
+
+        else:
+            # Spike mode: direct int16 processing
+            mat_data = item.get('mat', [])
+            vec_data = item.get('vec', [])
+            vlen = item.get('vlen', 32)
+            rd = item.get('rd', 0)
+
+            # Support both flattened and 2D matrix formats
+            mat_np = np.array(mat_data, dtype=np.int16)
+            if mat_np.ndim == 1:
+                mat_np = mat_np.reshape(vlen, vlen)
+            vec_np = np.array(vec_data, dtype=np.int16)[:vlen]
+
+            # Apply photonic model
+            if model_type in ['mzi_realistic', 'all_effects']:
+                model = MZINoiseModel()
+                result = model.forward(mat_np.astype(np.float64), vec_np.astype(np.float64),
+                                       apply_dac=True, apply_adc=True)
+            else:
+                result = np.matmul(mat_np.astype(np.float64), vec_np.astype(np.float64))
+                if model_type != 'ideal':
+                    result = apply_photonic_model(result, model_type)
+
+            result = np.round(result).astype(np.int16)
+
+            results.append({
+                'result': result.tolist(),
+                'rd': rd
+            })
+
+    # Periodic garbage collection
+    gc_interval = get_gc_interval()
+    if gc_interval >= 0:
+        _gc_call_counter += 1
+        if gc_interval == 0 or _gc_call_counter >= gc_interval:
+            gc.collect()
+            _gc_call_counter = 0
+
+    if verbose:
+        print(f'[Python] mvm_batched_unified: completed {len(results)} operations')
+
+    return results
+
+
+# ============================================================
 # Model Information
 # ============================================================
 
