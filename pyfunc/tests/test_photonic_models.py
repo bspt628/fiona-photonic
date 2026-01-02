@@ -16,6 +16,7 @@ Date: 2025-12-05
 import sys
 import os
 import numpy as np
+import pytest
 
 # Add parent directories to path for imports
 pyfunc_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -136,6 +137,13 @@ class TestResults:
             print(f"  Errors: {self.errors}")
         print(f"{'='*50}")
         return self.failed == 0 and self.errors == 0
+
+
+# Pytest fixture for TestResults
+@pytest.fixture
+def results():
+    """Pytest fixture that provides a TestResults instance"""
+    return TestResults()
 
 
 # =============================================================================
