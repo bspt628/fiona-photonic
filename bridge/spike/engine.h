@@ -712,7 +712,10 @@ inline int16_t* batch_mvm(int16_t* mat, int16_t* vec, size_t vlen, size_t& out_r
     static int16_t result[FIONA_VLEN_MAX];
 
     // Execute MVM directly
-    cpp_mvm<int16_t>(result, mat, vec, vlen, vlen);
+    // Note: Matrix is always stored with FIONA_VLEN_MAX (32) stride in fiona.cc,
+    // regardless of actual vlen. Vector is also padded to FIONA_VLEN_MAX.
+    // Using full dimensions ensures correct memory layout interpretation.
+    cpp_mvm<int16_t>(result, mat, vec, FIONA_VLEN_MAX, FIONA_VLEN_MAX);
 
     out_rows = vlen;
     return result;
