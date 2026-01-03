@@ -4,6 +4,7 @@
 #include "photonic_model.h"
 #include "ideal_model.h"
 #include "mzi_noise_model.h"
+#include "pcm_noise_model.h"
 #include "config.h"
 #include <memory>
 #include <iostream>
@@ -21,6 +22,7 @@ public:
      * Supported models:
      * - "ideal" (default): Pure mathematical computation
      * - "mzi_realistic": Full MZI noise model
+     * - "pcm_realistic": PCM-based photonic model
      * - "quantized": DAC/ADC quantization only
      * - "all_effects": Same as mzi_realistic
      *
@@ -46,6 +48,9 @@ public:
         }
         else if (model_type == "mzi_realistic" || model_type == "all_effects") {
             return std::make_unique<MZINoiseModel>(config);
+        }
+        else if (model_type == "pcm_realistic" || model_type == "pcm") {
+            return std::make_unique<PCMNoiseModel>(config);
         }
         else if (model_type == "quantized") {
             return std::make_unique<QuantizedModel>(config);

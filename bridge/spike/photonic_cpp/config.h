@@ -24,6 +24,11 @@ struct PhotonicConfig {
     float detector_noise_sigma = 0.005f;    // FIONA_DETECTOR_NOISE_SIGMA
     int quant_bits = 8;                     // FIONA_QUANT_BITS
 
+    // PCM Noise Model Parameters
+    float pcm_prog_variability = 0.03f;     // FIONA_PCM_PROG_VARIABILITY (default 3%)
+    float pcm_drift_coefficient = 0.06f;    // FIONA_PCM_DRIFT_COEFF (typical 0.05-0.1)
+    float pcm_read_noise_sigma = 0.01f;     // FIONA_PCM_READ_NOISE (default 1%)
+
     // Debug
     bool debug = false;                     // FIONA_CPP_DEBUG
 
@@ -57,6 +62,14 @@ struct PhotonicConfig {
         if ((val = std::getenv("FIONA_QUANT_BITS")))
             config.quant_bits = std::stoi(val);
 
+        // PCM parameters
+        if ((val = std::getenv("FIONA_PCM_PROG_VARIABILITY")))
+            config.pcm_prog_variability = std::stof(val);
+        if ((val = std::getenv("FIONA_PCM_DRIFT_COEFF")))
+            config.pcm_drift_coefficient = std::stof(val);
+        if ((val = std::getenv("FIONA_PCM_READ_NOISE")))
+            config.pcm_read_noise_sigma = std::stof(val);
+
         // Debug
         if ((val = std::getenv("FIONA_CPP_DEBUG")))
             config.debug = (std::string(val) == "1");
@@ -81,6 +94,9 @@ struct PhotonicConfig {
         std::cout << "  crosstalk_db: " << crosstalk_db << std::endl;
         std::cout << "  detector_noise_sigma: " << detector_noise_sigma << std::endl;
         std::cout << "  quant_bits: " << quant_bits << std::endl;
+        std::cout << "  pcm_prog_variability: " << pcm_prog_variability << std::endl;
+        std::cout << "  pcm_drift_coefficient: " << pcm_drift_coefficient << std::endl;
+        std::cout << "  pcm_read_noise_sigma: " << pcm_read_noise_sigma << std::endl;
     }
 };
 
